@@ -1,0 +1,4 @@
+# Pinned versions for regenerating our submission byte for byte (python -m possession.run).
+# The pipeline itself needs numpy only; pandas is for the scorer in evaluation/.
+numpy==1.26.4
+pandas==2.2.3
