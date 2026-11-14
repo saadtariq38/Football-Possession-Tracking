@@ -42,7 +42,9 @@ None. We trained no model and used no labelled data.
 
 We used the public 5-minute answer key only to check the program for errors. We did not change any
 setting after looking at it. All settings come from football knowledge or physics, for example
-"walking pace is about 1.3 m/s".
+"walking pace is about 1.3 m/s". A few were checked against this match's tracking data, without
+answers, for example allowing 3 players past the halfway line at kick-off because of tracking
+error.
 
 ## 5. Step 1: measurements
 
@@ -54,7 +56,9 @@ For every frame we compute:
 - **For each team:** how far its nearest player is from the ball, and the difference between that
   player's velocity and the ball's. Near zero means the player moves with the ball.
 - **Team shape:** each team's width and average running speed.
-- **Lines:** players standing still at each touchline, goal line or corner.
+- **All players:** how many are visible, how many are past the halfway line, and their average
+  speed.
+- **Lines:** players standing still at each touchline.
 
 ## 6. Step 2: stoppages (label `D`)
 
@@ -93,7 +97,7 @@ unbroken run of such frames is:
 | Situation | What we do |
 |---|---|
 | Restart | The first team to touch or control the ball has it from the restart |
-| The other team gets a control | Possession changes, from the start of that control |
+| The other team gets a control | Possession changes, from the start of that control (or from that team's touch just before, if it had one) |
 | The other team gets one touch | Nothing changes (deflection, block) |
 | The other team gets two touches in a row within 3 s, with no touch by the team in possession between them | Possession changes, from the first touch |
 | Players of both teams within 1.5 m of the ball (duel, tackle) | Nothing is decided; we wait to see who controls the ball next |
@@ -104,7 +108,7 @@ unbroken run of such frames is:
 - If the same team has the ball before and after a gap, it keeps the whole gap.
 - If the team changed and the ball was missing for 2 s or more before the change, we move the
   change to the point in the gap where the team shapes say it happened.
-- If a stretch of live play has no control at all, the team shapes decide.
+- If a stretch of live play has no touch or control at all, the team shapes decide.
 
 **Team shapes.** Where the ball is visible, we checked how often each shape signal agrees with our
 own ball-based labels (no human labels involved):
@@ -114,10 +118,11 @@ own ball-based labels (no human labels involved):
 | The team with the ball is wider | 85% |
 | The team without the ball runs more | 72% |
 | The team named by Smart Tagging | 81% |
-| The direction the teams move (not used) | 59% |
+| The direction the teams move (not used since tooo many false positives) | 59% |
 
-We add the first three, each scaled by its spread over the match. The result is used only where
-the ball is missing.
+Width and effort are each scaled by how much they vary over the match, and the tag votes are
+halved (each moment usually gets two tags). We add the three and average over 1 s either side.
+The result is used only where the ball is missing.
 
 ## 8. What we can measure
 
@@ -135,8 +140,8 @@ We cannot see the full-match score. These are the checks we can do:
 ## 9. Limitations
 
 - **Stoppages start late.** After a whistle, players take a few seconds to slow down.
-- **Short possessions** (under about 2 s) are often missed.
-- **No ball height**, so a high ball can look like it is at a player's feet.
+- **Short possessions** (under about 2 s) are potentially often missed.
+- **No ball height**, so a high ball can look like it is at a player's feet and player behaviour varies from normal when compared to floored ball
 - **When the ball is missing**, the team is decided by team shape, which agrees with the ball-based
   labels about 85% of the time.
 - **Settings are untested.** They come from football knowledge and were not tested on labelled
@@ -161,7 +166,7 @@ python3 -m venv .venv
 .venv/bin/python -m possession.run --out GunnersFC.csv
 ```
 
-The file's SHA-256 must be
+The file's SHA-256 (to match what we produced) must be
 `6999f9bc50a4ccebefd98fe84b453858f204c0047549c6aac1e9c92d20833dbe`.
 
 | File | What it does |
@@ -172,3 +177,8 @@ The file's SHA-256 must be
 | `possession/deadball.py` | Step 2, stoppages |
 | `possession/tracker.py` | Step 3, possession |
 | `possession/run.py` | Runs all steps and writes the CSV |
+| `possession/series.py` | Small helpers: finding unbroken stretches of frames, and averaging over a time window |
+
+We also use the organisers' code: `games.py` (file paths, graded halves), `starter/baseline.py`
+(which team each track belongs to, writing the CSV) and `starter/load_smart_tagging.py` (reading
+the tags).
