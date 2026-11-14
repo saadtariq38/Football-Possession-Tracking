@@ -1,3 +1,41 @@
+# GunnersFC — our submission
+
+This is team GunnersFC's entry. It is a copy of the organisers' repository with our code added in
+[`possession/`](possession/). How our method works is in [GunnersFC.md](GunnersFC.md).
+
+## How to make our submission file
+
+You need Python 3.9 to 3.12 (we used 3.12.3 on Linux) and about 1 GB of free memory.
+
+1. Put the match data in `data/`, as described in [data/README.md](data/README.md). Only these
+   three files are used:
+   - `data/tactical/BAR-ATH_tactical_atd.xml`
+   - `data/tactical/BAR-ATH_tactical_atd.txt`
+   - `data/tactical/BAR-ATH_tactical_smart_tagging.xml`
+2. Install:
+   ```bash
+   python3 -m venv .venv
+   .venv/bin/pip install -r requirements-possession.txt
+   ```
+3. Make the file (takes under a minute):
+   ```bash
+   .venv/bin/python -m possession.run --out GunnersFC.csv
+   ```
+4. Check it:
+   ```bash
+   .venv/bin/python evaluation/validate_submission.py GunnersFC.csv
+   sha256sum GunnersFC.csv
+   ```
+   The check must print `OK`, and the second line must print:
+   `6999f9bc50a4ccebefd98fe84b453858f204c0047549c6aac1e9c92d20833dbe`
+
+On Windows, use `.venv\Scripts\python` in place of `.venv/bin/python`.
+
+The first run saves a cache in `data/cache/`, so later runs are faster. The match data and the
+cache are never committed: `.gitignore` excludes all of `data/`.
+
+---
+
 # More than a Hack 2027 — Phase 1: Ball Possession
 
 **Organised by [Metrica Sports](https://metrica-sports.com), [FC Barcelona](https://www.fcbarcelona.com)
