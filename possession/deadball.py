@@ -1,35 +1,26 @@
-"""Find the stoppages: every stretch of a graded half where the ball is out of play.
+"""Step 2: find the stoppages (the times the ball is out of play).
 
-The tracking has no "ball dead" flag, so a stoppage is recognised by what it does to the play.
-First the CORE -- frames that can only be a stoppage -- found five independent ways:
+The tracking has no "ball out of play" field, so we look for signs of a stoppage.
 
-  A. whistle   players drop to walking pace AND nobody plays the ball (unseen, held or placed).
-               Either alone is not enough: slow build-up has walking players and a moving ball,
-               and a goalkeeper holding the ball has a still ball and players moving into shape.
-  B. out       the ball is seen clearly over a line.
-  C. placed    the ball sits still on a goal area or a corner arc: a goal kick or a corner waiting
-               to be taken. Players often jog back meanwhile, so A misses these.
-  D. thrower   a player stands still at a touchline, the ball was last seen near that same
-               touchline, and nobody plays the ball: a throw-in waiting to be taken.
-  E. kick-off  every player in their own half -- the formation alone, because a spare ball being
-               knocked about before a half starts would otherwise hide it. The kick-off is the
-               moment the formation breaks.
+First we mark frames that can only be a stoppage. There are five signs:
 
-Then each core is widened to the whole stoppage:
+    whistle   players walk (average speed below 1.3 m/s) AND nobody plays the ball
+    out       the ball is seen over a line
+    placed    the ball lies still on a goal area or corner arc (goal kick, corner)
+    thrower   a player stands still at the touchline where the ball was last seen (throw-in)
+    kickoff   (almost) every player is in their own half
 
-  start   players only react a second or two after the ball goes out or the whistle goes. If the
-          ball was last seen near a line just before the core, it went out there and the stoppage
-          starts right after that sighting; otherwise just after the ball was last played, but
-          never more than LOOKBACK_S before the core.
-  stop    the restart: the first time the ball is played after the core.
+Then each group of marked frames becomes a full stoppage:
 
-A half is dead from its first graded frame until its first kick-off, which is what the second half
-needs: it is graded from 110808 but kicks off minutes later.
+    start   Players slow down a few seconds after the ball goes out. So if the ball was last seen
+            near a line shortly before, the stoppage starts right after that. Otherwise it starts
+            just after the ball was last played, but at most 3 seconds earlier.
+    end     The first time the ball is played again (the restart). For a kick-off: the moment
+            the players leave the kick-off formation.
 
-Every number below comes from the laws of the game, football practice or physics, and was fixed
-without looking at any label of this match.
+Each half is also dead from its first graded frame until its first kick-off.
 
-    .venv/bin/python -m possession.deadball       # detect, then print what was found
+    .venv/bin/python -m possession.deadball       # find the stoppages and print a summary
 """
 
 import os
@@ -44,26 +35,22 @@ from games import GAME, GAMES  # noqa: E402
 from possession import features  # noqa: E402
 from possession.series import rolling_any, rolling_mean, runs  # noqa: E402
 
-# Params
+# Params -- chosen from football rules, football practice and physics.
 FPS = GAMES[GAME]["fps"]
 PITCH_LENGTH, PITCH_WIDTH = GAMES[GAME]["pitch"]
 
-# A -- average human walking pace. Below it, averaged over the visible players, the team walks.
+# whistle: walking pace, averaged over 1.5 s either side.
 QUIET_SPEED = 1.3
-# Team speed is averaged over +/-1.5 s so one sprinting player cannot break a stoppage.
 QUIET_HALF_WINDOW = int(1.5 * FPS)
-# The ball counts as "being played" above a slow dribble. A ball carried or rolled back to the
-# taker moves slower than this; a pass or a dribble at pace moves faster.
+# The ball is "being played" when it moves faster than 4 m/s.
 BALL_PLAY_SPEED = 4.0
-# In open play the ball is played at least every few seconds, so +/-2 s with no play is a pause.
+# "Nobody plays the ball" = no fast ball within 2 s either side.
 IDLE_HALF_WINDOW = 2 * FPS
 
-# B -- the ball is out only when all of it is over the line. Half a metre clears the ball's own
-# size and typical tracking error.
+# out: the whole ball must be over the line, so at least 0.5 m past it.
 OUT_MARGIN_M = 0.5
 
-# C -- a ball this slow is lying on the grass. Goal area and corner arc from the laws of the game,
-# plus a metre for tracking error and for a ball placed on the edge.
+# placed: still ball (below 0.5 m/s) for 1.5 s. Sizes from the laws of the game, plus 1 m.
 PLACED_SPEED = 0.5
 PLACED_S = 1.5
 GOAL_AREA_DEPTH_M = 5.5
@@ -71,170 +58,248 @@ GOAL_AREA_HALF_WIDTH_M = 9.16
 CORNER_ARC_M = 1.0
 SPOT_MARGIN_M = 1.0
 
-# D -- the thrower has to stand at the line for a moment before the throw.
+# thrower: standing at the line for 1.5 s.
 THROWER_S = 1.5
 
-# E -- kick-off. At least this many players tracked (fewer means the teams are still walking out),
-# and at most this many past the halfway line in total: the takers stand at the ball on the line
-# and tracking puts a player or two per side a metre over it. In open play several attackers are
-# always in the other half, so this stays far from anything but a kick-off.
+# kickoff: at least 16 players visible, at most 3 in the other half, for 2 s.
 KICKOFF_MIN_PLAYERS = 16
 KICKOFF_PAST_HALFWAY = 3
 KICKOFF_FORMATION_S = 2.0
-# The opening kick-off of a half is looked for this long after the half's first graded frame.
+# The first kick-off of a half must appear within 4 minutes of the half's first frame.
 KICKOFF_SEARCH_S = 240.0
-# Teams line up over a minute or two and the formation forms and breaks as players take position,
-# so formations this close together belong to the same opening. A real kick-off is followed by far
-# more open play than this before any goal could bring the next one.
+# Before a kick-off the formation can break and form again. Breaks under 30 s are joined.
 OPENING_CHAIN_GAP_S = 30.0
 
-# Widening a core into a stoppage.
-LINE_NEAR_M = 2.0
-OUT_LOOKBACK_S = 6.0
-LOOKBACK_S = 3.0
-RESTART_WAIT_S = 3.0
+# Start and end of a stoppage.
+LINE_NEAR_M = 2.0        # "near a line"
+OUT_LOOKBACK_S = 6.0     # how far back to look for the ball near a line
+LOOKBACK_S = 3.0         # otherwise, at most this far back
+RESTART_WAIT_S = 3.0     # how long to wait for the restart kick
 
-# The quickest restarts (a quick throw-in) take about three seconds.
+# Clean-up: stoppages under 3 s are dropped, stoppages under 4 s apart are joined.
 MIN_DEAD_S = 3.0
-# A restart followed by a new stoppage within a few seconds is rare; a stoppage briefly "broken"
-# by the ball being kicked back to the taker is common. Closer than this, they are one stoppage.
 MERGE_GAP_S = 4.0
 
-PATHS = ("whistle", "out", "placed", "thrower", "kickoff")
+SIGNS = ("whistle", "out", "placed", "thrower", "kickoff")
 
 
-def sustained(mask, min_seconds):
-    """mask with every True run shorter than min_seconds removed."""
-    out = np.zeros(len(mask), dtype=bool)
-    for start, stop in zip(*runs(mask)):
-        if stop - start >= min_seconds * FPS:
-            out[start:stop] = True
-    return out
+def keep_long_runs(mask, min_seconds):
+    """Copy of mask that keeps only the stretches of True lasting at least min_seconds."""
+    result = np.zeros(len(mask), dtype=bool)
+    starts, stops = runs(mask)
+    for i in range(len(starts)):
+        if stops[i] - starts[i] >= min_seconds * FPS:
+            result[starts[i]:stops[i]] = True
+    return result
 
 
 def last_seen(values):
-    """(last known value, frames since it was seen) at every frame, by forward fill."""
+    """For every frame: the most recent known value, and how many frames ago it was seen.
+
+    Before the first known value: NaN, and a very large number of frames.
+    """
+    n = len(values)
+    last_value = np.full(n, np.nan, dtype=values.dtype)
+    frames_ago = np.full(n, np.iinfo(np.int32).max, dtype=np.int64)
     known = ~np.isnan(values)
-    index = np.where(known, np.arange(len(values)), -1)
-    np.maximum.accumulate(index, out=index)
-    filled = np.where(index >= 0, values[np.maximum(index, 0)], np.nan)
-    age = np.where(index >= 0, np.arange(len(values)) - index, np.iinfo(np.int32).max)
-    return filled, age
+
+    latest_frame = -1
+    for frame in range(n):
+        if known[frame]:
+            latest_frame = frame
+        if latest_frame >= 0:
+            last_value[frame] = values[latest_frame]
+            frames_ago[frame] = frame - latest_frame
+    return last_value, frames_ago
+
+
+def whistle_sign(table):
+    with np.errstate(invalid="ignore"):
+        team_speed = rolling_mean(table["all_mean_speed"], QUIET_HALF_WINDOW)
+        players_walk = team_speed < QUIET_SPEED
+        ball_played = table["ball_speed"] > BALL_PLAY_SPEED
+    nobody_plays_ball = ~rolling_any(ball_played, IDLE_HALF_WINDOW)
+    return players_walk & nobody_plays_ball, nobody_plays_ball
+
+
+def out_sign(table):
+    with np.errstate(invalid="ignore"):
+        over_touchline = table["ball_touchline_m"] < -OUT_MARGIN_M
+        over_goal_line = table["ball_goalline_m"] < -OUT_MARGIN_M
+    return over_touchline | over_goal_line
+
+
+def placed_sign(table):
+    x = table["ball_x"]
+    y = table["ball_y"]
+    with np.errstate(invalid="ignore"):
+        distance_to_goal_line = np.minimum(x, PITCH_LENGTH - x)
+        distance_to_touchline = np.minimum(y, PITCH_WIDTH - y)
+
+        in_goal_area = ((distance_to_goal_line <= GOAL_AREA_DEPTH_M + SPOT_MARGIN_M)
+                        & (np.abs(y - PITCH_WIDTH / 2) <= GOAL_AREA_HALF_WIDTH_M + SPOT_MARGIN_M))
+        distance_to_corner = np.hypot(distance_to_goal_line, distance_to_touchline)
+        in_corner_arc = distance_to_corner <= CORNER_ARC_M + SPOT_MARGIN_M
+
+        ball_still = table["ball_speed"] < PLACED_SPEED
+    return keep_long_runs(ball_still & (in_goal_area | in_corner_arc), PLACED_S)
+
+
+def thrower_sign(table, nobody_plays_ball):
+    last_y, frames_ago = last_seen(table["ball_y"])
+    with np.errstate(invalid="ignore"):
+        seen_recently = frames_ago <= OUT_LOOKBACK_S * FPS
+        # y = 0 is one touchline ("low"), y = 68 the other ("high").
+        thrower_low = (table["line_touch_low_still"] > 0) & (last_y < LINE_NEAR_M)
+        thrower_high = (table["line_touch_high_still"] > 0) & (last_y > PITCH_WIDTH - LINE_NEAR_M)
+    candidate = nobody_plays_ball & seen_recently & (thrower_low | thrower_high)
+    return keep_long_runs(candidate, THROWER_S)
+
+
+def kickoff_sign(table):
+    players_visible = table["home_n_players"] + table["away_n_players"]
+    players_past_halfway = table["home_n_past_halfway"] + table["away_n_past_halfway"]
+    formation = ((players_visible >= KICKOFF_MIN_PLAYERS)
+                 & (players_past_halfway <= KICKOFF_PAST_HALFWAY))
+    return keep_long_runs(formation, KICKOFF_FORMATION_S)
 
 
 def core_paths(table):
-    """{path: per-frame bool} for the five ways a frame can be recognised as a stoppage."""
-    x, y, speed = table["ball_x"], table["ball_y"], table["ball_speed"]
-    with np.errstate(invalid="ignore"):
-        played = speed > BALL_PLAY_SPEED
-        quiet = rolling_mean(table["all_mean_speed"], QUIET_HALF_WINDOW) < QUIET_SPEED
-        idle = ~rolling_any(played, IDLE_HALF_WINDOW)
-
-        out = (table["ball_touchline_m"] < -OUT_MARGIN_M) | (table["ball_goalline_m"] < -OUT_MARGIN_M)
-
-        goal_area = ((np.minimum(x, PITCH_LENGTH - x) <= GOAL_AREA_DEPTH_M + SPOT_MARGIN_M)
-                     & (np.abs(y - PITCH_WIDTH / 2) <= GOAL_AREA_HALF_WIDTH_M + SPOT_MARGIN_M))
-        corner = (np.hypot(np.minimum(x, PITCH_LENGTH - x), np.minimum(y, PITCH_WIDTH - y))
-                  <= CORNER_ARC_M + SPOT_MARGIN_M)
-        placed = sustained((speed < PLACED_SPEED) & (goal_area | corner), PLACED_S)
-
-        last_y, age = last_seen(y)
-        recent = age <= OUT_LOOKBACK_S * FPS
-        thrower = sustained(idle & recent & (
-            ((table["line_touch_low_still"] > 0) & (last_y < LINE_NEAR_M))
-            | ((table["line_touch_high_still"] > 0) & (last_y > PITCH_WIDTH - LINE_NEAR_M))),
-            THROWER_S)
-
-        kickoff = sustained(
-            (table["home_n_players"] + table["away_n_players"] >= KICKOFF_MIN_PLAYERS)
-            & (table["home_n_past_halfway"] + table["away_n_past_halfway"]
-               <= KICKOFF_PAST_HALFWAY),
-            KICKOFF_FORMATION_S)
-
+    """For each of the five signs, a mask of the frames that show it (graded frames only)."""
     graded = table["half"] > 0
-    return {"whistle": quiet & idle & graded, "out": out & graded, "placed": placed & graded,
-            "thrower": thrower & graded, "kickoff": kickoff & graded}
+    whistle, nobody_plays_ball = whistle_sign(table)
+    signs = {}
+    signs["whistle"] = whistle & graded
+    signs["out"] = out_sign(table) & graded
+    signs["placed"] = placed_sign(table) & graded
+    signs["thrower"] = thrower_sign(table, nobody_plays_ball) & graded
+    signs["kickoff"] = kickoff_sign(table) & graded
+    return signs
 
 
-def last_before(indices, frame):
-    """Largest value in sorted indices that is < frame, or None."""
-    position = np.searchsorted(indices, frame) - 1
-    return int(indices[position]) if position >= 0 else None
+def last_before(frames, frame):
+    """The largest number in the sorted list frames that is below frame, or None."""
+    position = np.searchsorted(frames, frame) - 1
+    if position < 0:
+        return None
+    return int(frames[position])
 
 
-def first_at_or_after(indices, frame):
-    """Smallest value in sorted indices that is >= frame, or None."""
-    position = np.searchsorted(indices, frame)
-    return int(indices[position]) if position < len(indices) else None
+def first_at_or_after(frames, frame):
+    """The smallest number in the sorted list frames that is frame or above, or None."""
+    position = np.searchsorted(frames, frame)
+    if position >= len(frames):
+        return None
+    return int(frames[position])
 
 
 def detect(table, game=GAME, paths=None):
-    """[(start, stop)] half-open stoppages, in frame order, never crossing a half boundary.
+    """All stoppages, as a list of (first frame, frame just after the end), in time order."""
+    if paths is None:
+        paths = core_paths(table)
 
-    paths is core_paths(table), passed in when the caller already has it.
-    """
-    paths = paths if paths is not None else core_paths(table)
+    # A frame is a "core" stoppage frame if any sign marks it.
     core = np.zeros(len(table["half"]), dtype=bool)
-    for mask in paths.values():
-        core |= mask
+    for sign in SIGNS:
+        core = core | paths[sign]
 
+    # Frames where the ball is being played, and frames where the ball is seen at all.
     with np.errstate(invalid="ignore"):
-        played = np.flatnonzero(table["ball_speed"] > BALL_PLAY_SPEED)
-        near_line = np.minimum(table["ball_touchline_m"], table["ball_goalline_m"]) < LINE_NEAR_M
-    seen = np.flatnonzero(~np.isnan(table["ball_x"]))
-
-    def restart_after(frame):
-        restart = first_at_or_after(played, frame)
-        limit = frame + IDLE_HALF_WINDOW + int(RESTART_WAIT_S * FPS)
-        return restart if restart is not None and restart <= limit else frame
+        played_frames = np.flatnonzero(table["ball_speed"] > BALL_PLAY_SPEED)
+        distance_to_line = np.minimum(table["ball_touchline_m"], table["ball_goalline_m"])
+        near_line = distance_to_line < LINE_NEAR_M
+    seen_frames = np.flatnonzero(~np.isnan(table["ball_x"]))
 
     stoppages = []
-    for _, first, last in features.half_video_blocks(game):
-        half_start, half_stop = first, last + 1
-        starts, stops = runs(core[half_start:half_stop])
-        for core_start, core_stop in zip(starts + half_start, stops + half_start):
-            sighting = last_before(seen, core_start)
-            if (sighting is not None and near_line[sighting]
-                    and core_start - sighting <= OUT_LOOKBACK_S * FPS):
-                start = sighting + 1
+    for half_number, first_frame, last_frame in features.half_video_blocks(game):
+        half_start = first_frame
+        half_stop = last_frame + 1
+
+        core_starts, core_stops = runs(core[half_start:half_stop])
+        for i in range(len(core_starts)):
+            core_start = core_starts[i] + half_start
+            core_stop = core_stops[i] + half_start
+
+            start = stoppage_start(core_start, seen_frames, played_frames, near_line)
+
+            if paths["kickoff"][core_stop - 1]:
+                # A kick-off restarts when the formation breaks.
+                stop = core_stop
             else:
-                last_play = last_before(played, core_start)
-                start = core_start - int(LOOKBACK_S * FPS)
-                if last_play is not None:
-                    start = max(start, last_play + 1)
-            # A kick-off restarts when its formation breaks, not at the next fast ball, which
-            # before a half can be a spare ball knocked about elsewhere on the pitch.
-            kicked_off = paths["kickoff"][core_stop - 1]
-            stop = core_stop if kicked_off else restart_after(core_stop)
+                stop = restart_after(core_stop, played_frames)
+
             stoppages.append((max(half_start, start), min(half_stop, stop)))
 
-        # Dead from the first graded frame until the opening kick-off, if one is found in time:
-        # the end of the last formation in the opening chain.
-        opening = None
-        for kick_start, kick_stop in zip(*runs(paths["kickoff"][half_start:half_stop])):
-            if opening is None and kick_start > KICKOFF_SEARCH_S * FPS:
-                break
-            if opening is not None and kick_start - opening > OPENING_CHAIN_GAP_S * FPS:
-                break
-            opening = int(kick_stop)
-        if opening is not None:
-            stoppages.append((half_start, half_start + opening))
+        opening_end = opening_kickoff_end(paths["kickoff"][half_start:half_stop])
+        if opening_end is not None:
+            stoppages.append((half_start, half_start + opening_end))
 
     return tidy(stoppages)
 
 
+def stoppage_start(core_start, seen_frames, played_frames, near_line):
+    """Go back from the first core frame to when the stoppage really began."""
+    last_sighting = last_before(seen_frames, core_start)
+    if last_sighting is not None:
+        seen_near_line = near_line[last_sighting]
+        seen_recently = core_start - last_sighting <= OUT_LOOKBACK_S * FPS
+        if seen_near_line and seen_recently:
+            # The ball went out where it was last seen.
+            return last_sighting + 1
+
+    # Otherwise: just after the ball was last played, but at most LOOKBACK_S back.
+    start = core_start - int(LOOKBACK_S * FPS)
+    last_play = last_before(played_frames, core_start)
+    if last_play is not None:
+        start = max(start, last_play + 1)
+    return start
+
+
+def restart_after(frame, played_frames):
+    """The first frame the ball is played at or after frame, if it comes soon enough."""
+    restart = first_at_or_after(played_frames, frame)
+    latest_allowed = frame + IDLE_HALF_WINDOW + int(RESTART_WAIT_S * FPS)
+    if restart is not None and restart <= latest_allowed:
+        return restart
+    return frame
+
+
+def opening_kickoff_end(kickoff_in_half):
+    """Frame (counted from the half's start) where the half's first kick-off happens, or None.
+
+    Before a kick-off the formation can appear in several pieces. Pieces less than
+    OPENING_CHAIN_GAP_S apart belong together; the kick-off is the end of the last piece.
+    """
+    opening_end = None
+    starts, stops = runs(kickoff_in_half)
+    for i in range(len(starts)):
+        if opening_end is None and starts[i] > KICKOFF_SEARCH_S * FPS:
+            break  # the first formation comes too late to be the opening kick-off
+        if opening_end is not None and starts[i] - opening_end > OPENING_CHAIN_GAP_S * FPS:
+            break  # too long after the previous piece: a different kick-off
+        opening_end = int(stops[i])
+    return opening_end
+
+
 def tidy(stoppages):
-    """Merge overlapping or nearly touching stoppages, then drop the ones too short to be real."""
-    merged = []
+    """Join stoppages that overlap or are less than MERGE_GAP_S apart, then drop short ones."""
+    joined = []
     for start, stop in sorted(stoppages):
-        if merged and start - merged[-1][1] < MERGE_GAP_S * FPS:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], stop))
+        if len(joined) > 0 and start - joined[-1][1] < MERGE_GAP_S * FPS:
+            previous_start, previous_stop = joined[-1]
+            joined[-1] = (previous_start, max(previous_stop, stop))
         else:
-            merged.append((start, stop))
-    return [(start, stop) for start, stop in merged if stop - start >= MIN_DEAD_S * FPS]
+            joined.append((start, stop))
+
+    long_enough = []
+    for start, stop in joined:
+        if stop - start >= MIN_DEAD_S * FPS:
+            long_enough.append((start, stop))
+    return long_enough
 
 
 def dead_mask(stoppages, n_frames):
+    """A mask that is True on every stoppage frame."""
     mask = np.zeros(n_frames, dtype=bool)
     for start, stop in stoppages:
         mask[start:stop] = True
@@ -242,38 +307,31 @@ def dead_mask(stoppages, n_frames):
 
 
 def report(table, stoppages, paths):
-    """What was found, judged without any ground truth: counts, share and agreement with tags."""
+    """Print a summary of the stoppages. No answers are used."""
     graded = table["half"] > 0
     dead = dead_mask(stoppages, len(graded))
-    seconds = np.array([stop - start for start, stop in stoppages]) / float(FPS)
+    dead_minutes = dead[graded].sum() / FPS / 60.0
+    graded_minutes = graded.sum() / FPS / 60.0
     print("{} stoppages, {:.1f}% of graded time dead ({:.1f} of {:.1f} minutes)".format(
-        len(stoppages), 100.0 * dead[graded].mean(), dead[graded].sum() / FPS / 60.0,
-        graded.sum() / FPS / 60.0))
-    print("duration s  p10 {:.1f}  p50 {:.1f}  p90 {:.1f}  max {:.1f}".format(
-        *np.percentile(seconds, [10, 50, 90, 100])))
-    print("stoppages each path contributed to:  {}".format("  ".join(
-        "{} {}".format(name, sum(paths[name][a:b].any() for a, b in stoppages))
-        for name in PATHS)))
-    for _, first, _ in features.half_video_blocks(GAME):
-        opening = [s for s in stoppages if s[0] == first]
-        print("  half starting {}: {}".format(
-            first, "dead until {}".format(opening[0][1]) if opening else "no opening stoppage"))
+        len(stoppages), 100.0 * dead[graded].mean(), dead_minutes, graded_minutes))
 
-    # Smart Tagging is independent evidence: every tagged set piece should sit on a detected
-    # stoppage, with the restart a few seconds after the tag window opens.
-    age = table["tag_set_piece_age_s"]
-    opens = np.flatnonzero((age == 0) & graded)
-    hit, offsets = 0, []
-    for frame in opens:
-        overlapping = [s for s in stoppages if s[0] <= frame + 10 * FPS and s[1] >= frame]
-        if overlapping:
-            hit += 1
-            offsets.append((overlapping[0][1] - frame) / float(FPS))
+    for sign in SIGNS:
+        count = 0
+        for start, stop in stoppages:
+            if paths[sign][start:stop].any():
+                count += 1
+        print("  {:<8} seen in {} stoppages".format(sign, count))
+
+    # Check against Smart Tagging: each tagged set piece should have a stoppage near its start.
+    tag_starts = np.flatnonzero((table["tag_set_piece_age_s"] == 0) & graded)
+    matched = 0
+    for frame in tag_starts:
+        for start, stop in stoppages:
+            if start <= frame + 10 * FPS and stop >= frame:
+                matched += 1
+                break
     print("tagged set pieces with a detected stoppage in their first 10 s: {} of {}".format(
-        hit, len(opens)))
-    if offsets:
-        print("  restart this long after the tag opens, s: p10 {:.1f}  p50 {:.1f}  p90 {:.1f}"
-              .format(*np.percentile(offsets, [10, 50, 90])))
+        matched, len(tag_starts)))
 
 
 if __name__ == '__main__':

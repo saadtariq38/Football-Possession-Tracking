@@ -1,20 +1,15 @@
-"""Smart Tagging as per-frame hints: which side the tagger thinks has the ball, and set pieces.
+"""Read the Smart Tagging file and turn it into two hints per frame.
 
-Hints, never labels. The tagging is automatic and has false positives and negatives, its windows
-are a few seconds loose, and a phase is not a possession. So this module only counts how many tags
-cover each frame and what they claim; deciding what to believe is the job of later steps.
+Smart Tagging is a list of time windows made by a computer, for example
+"BUILD UP, Barcelona, 312 s to 330 s". It has mistakes, so we only use it as a hint.
 
-A tag says who has the ball in one of two ways. "BUILD UP, Barcelona" names the side in
-possession; "DEFENDING IN MIDDLE THIRD, Barcelona" names the side *without* it. Both become a vote
-for the side that has the ball. Several codes come in mirrored pairs with identical windows
-(PROGRESSION / DEFENDING IN MIDDLE THIRD, BUILD UP / DEFENDING IN ATTACKING THIRD, ...), so one
-moment of play usually carries two votes for the same side, not two independent opinions.
+1. Votes: which team the tags say has the ball.
+   - Some tags name the team WITH the ball, e.g. "BUILD UP, Barcelona".
+   - Some name the team WITHOUT the ball, e.g. "DEFENDING IN MIDDLE THIRD, Barcelona".
+   Both count as a vote for the team with the ball.
 
-Set pieces are fixed-length windows -- 35 s for corners, throw-ins, goal kicks and free kicks, 5 s
-for kickoffs -- that open a few seconds BEFORE the restart: averaged over the 35 s windows the ball
-is mostly unseen and the players slow for the first ~4-6 s, then play resumes. So what a set-piece
-tag says is "dead ball, restart shortly after this window opens", and set_piece_age_s, the time
-since the window opened, is the useful form of it. Being somewhere inside the window says little.
+2. Set-piece age: seconds since a set-piece tag (corner, throw-in, ...) started. The tag window
+   opens a few seconds before the restart, so this tells us roughly when a restart happens.
 """
 
 import os
@@ -30,67 +25,70 @@ from games import GAME, GAMES  # noqa: E402
 from load_smart_tagging import load as load_events  # noqa: E402
 
 # Params
-# Codes whose Team tag is the side in possession, and codes whose Team tag is the side without it.
-# Matched lower case: the file has upper-case codes and title-case values.
+# Tags that name the team WITH the ball (lower case: the file uses upper case).
 IN_POSSESSION = {"build up", "progression", "creating chances", "attacking transition",
                  "long ball", "ball in final third", "ball in the box", "players in the box"}
+# Tags that name the team WITHOUT the ball.
 OUT_OF_POSSESSION = {"defending in attacking third", "defending in middle third",
                      "defending in defensive third", "defensive transition"}
 SET_PIECE_CODE = "set pieces"
-GOAL_CODE = "goals"
-# Set piece Type -> small integer code, 0 meaning no set piece. Unknown types still mark a set
-# piece, as OTHER_SET_PIECE, rather than silently vanishing.
-SET_PIECE_TYPES = {"throw-in": 1, "corner kick": 2, "goal kick": 3, "free kick": 4,
-                   "kick off (after goal)": 5, "kick off (start)": 6}
-OTHER_SET_PIECE = 7
-NO_SIDE = -1
+NO_TEAM = -1
 
 
-def side_of(tag_team, names):
-    """0 for home, 1 for away, NO_SIDE for N/A or anything unrecognised. names = (home, away)."""
+def team_number(tag_team, names):
+    """0 for the home team, 1 for away, NO_TEAM for "N/A" or anything else.
+
+    names is (home club name, away club name), taken from the tracking metadata.
+    """
     value = (tag_team or "").strip().lower()
-    for side, name in enumerate(names):
-        if value == (name or "").strip().lower():
-            return side
-    return NO_SIDE
+    home_name = (names[0] or "").strip().lower()
+    away_name = (names[1] or "").strip().lower()
+    if value == home_name:
+        return 0
+    if value == away_name:
+        return 1
+    return NO_TEAM
 
 
 def frame_hints(names, n_frames, game=GAME, data_dir=None):
-    """Per-frame arrays built from the tagging. names = (home club, away club) from the ATD.
+    """Hints for every frame:
 
-    home_votes / away_votes   how many tags covering the frame say that side has the ball
-    set_piece                 SET_PIECE_TYPES code of a set piece covering the frame, 0 if none
-    set_piece_side            side the set piece is tagged to, NO_SIDE if N/A (every throw-in)
-    set_piece_age_s           seconds since that set piece window opened, NaN outside one
-    goal_side                 side tagged as scoring a goal covering the frame, NO_SIDE if none
+        home_votes        how many tags covering this frame say the home team has the ball
+        away_votes        the same for the away team
+        set_piece_age_s   seconds since a set-piece tag window opened (NaN outside one)
     """
     fps = float(GAMES[game]["fps"])
-    votes = np.zeros((2, n_frames), dtype=np.int8)
-    set_piece = np.zeros(n_frames, dtype=np.int8)
-    set_piece_side = np.full(n_frames, NO_SIDE, dtype=np.int8)
+    home_votes = np.zeros(n_frames, dtype=np.int8)
+    away_votes = np.zeros(n_frames, dtype=np.int8)
     set_piece_age = np.full(n_frames, np.nan, dtype=np.float32)
-    goal_side = np.full(n_frames, NO_SIDE, dtype=np.int8)
 
     for event in load_events(game, data_dir):
         start = max(0, event["start_frame"])
         stop = min(n_frames, event["end_frame"])
         if stop <= start:
             continue
+
         code = (event["code"] or "").strip().lower()
-        side = side_of(event["tags"].get("Team"), names)
+        team = team_number(event["tags"].get("Team"), names)
 
         if code == SET_PIECE_CODE:
-            kind = (event["tags"].get("Type") or "").strip().lower()
-            set_piece[start:stop] = SET_PIECE_TYPES.get(kind, OTHER_SET_PIECE)
-            set_piece_side[start:stop] = side
-            set_piece_age[start:stop] = (np.arange(start, stop) - event["start_frame"]) / fps
-        elif code == GOAL_CODE:
-            goal_side[start:stop] = side
-        elif side != NO_SIDE and code in IN_POSSESSION:
-            votes[side, start:stop] += 1
-        elif side != NO_SIDE and code in OUT_OF_POSSESSION:
-            votes[1 - side, start:stop] += 1
+            frames = np.arange(start, stop)
+            set_piece_age[start:stop] = (frames - event["start_frame"]) / fps
+            continue
+        if team == NO_TEAM:
+            continue
 
-    return {"home_votes": votes[0], "away_votes": votes[1], "set_piece": set_piece,
-            "set_piece_side": set_piece_side, "set_piece_age_s": set_piece_age,
-            "goal_side": goal_side}
+        # Work out which team has the ball according to this tag.
+        if code in IN_POSSESSION:
+            team_with_ball = team
+        elif code in OUT_OF_POSSESSION:
+            team_with_ball = 1 - team
+        else:
+            continue
+
+        if team_with_ball == 0:
+            home_votes[start:stop] += 1
+        else:
+            away_votes[start:stop] += 1
+
+    return {"home_votes": home_votes, "away_votes": away_votes, "set_piece_age_s": set_piece_age}

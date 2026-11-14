@@ -14,13 +14,9 @@ model. It has three steps:
 
 ## 2. Why this approach
 
-- The ranking score counts whole possessions. One wrong switch inside a long possession splits it
-  in two and costs a lot. So our rules change possession only when the other team clearly
-  controls the ball.
-- The challenge rules say a loose or contested ball stays with the last team. We follow this
-  directly.
-- No labels from this match may be used for training. Rules based on football knowledge need no
-  training.
+- The ranking score counts whole possessions. One wrong switch costs a lot. So our rules change possession only when the other team clearly controls the ball and is biased towards this.
+- The challenge rules say a loose or contested ball stays with the last team. We follow this..
+- No labels from this match could be used for training. Rules based on football knowledge were used for this reason.
 
 ## 3. Data used
 

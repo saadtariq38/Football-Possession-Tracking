@@ -1,30 +1,23 @@
-"""Who has the ball between stoppages.
+"""Step 3: decide which team has the ball between stoppages.
 
-The rule the challenge states, applied as literally as the tracking allows:
+The rules:
+    - After a stoppage, the team that restarts has the ball.
+    - Possession changes only when the OTHER team gets CONTROL of the ball.
+    - While the ball is loose, contested or not seen, the last team keeps it.
 
-  * after every stoppage, the team that restarts has the ball;
-  * possession changes only when the OTHER team gains CONTROL of it;
-  * while the ball is loose, contested or out of sight, the last team keeps it.
+Control: a player is within 1.5 m of the ball, moves with it (velocity difference at most
+3 m/s), and no opponent is within 1.5 m. An unbroken run of such frames is an "event":
+    control   0.4 s or longer: enough to take the ball
+    touch     0.12 s to 0.4 s: one touch by the other team changes nothing (a deflection),
+              two touches in a row by the other team change possession
 
-Control is the one thing the tracking can almost see directly: a player within CONTROL_RADIUS_M of
-the ball, moving with it (their velocity within CONTROL_REL_SPEED of the ball's), and no opponent
-that close. A run of such frames is a CONTROL EVENT for that team. With no ball height in the data,
-"moving with it" is also what separates a ball at someone's feet from one flying over their head.
+When both teams are within 1.5 m (a duel), there is no event, so nothing is decided until
+someone comes out with the ball.
 
-  strong event   a run of at least CONTROL_S. Enough on its own to take the ball.
-  weak event     a shorter run, at least TOUCH_S. A touch. One touch by the other team is a
-                 deflection or a block and changes nothing; two in a row by the same team, with no
-                 touch by the team in possession between them, are control.
+When the ball is not seen, there are no events. If the same team has the ball before and after
+the gap, it keeps the whole gap. If not, the change is placed where the team shapes change.
 
-A duel -- both teams within CONTROL_RADIUS_M -- produces no event at all, so it decides nothing by
-itself: the tracker waits and sees who comes out of it with the ball, and dates the change to
-their first touch.
-
-The ball is missing on long stretches of open play, where no events exist. If the same team has
-it either side of a gap, the gap is theirs. If the team changed, the change happened somewhere in
-the gap, and it is placed where the team shapes say it did (see shape_score).
-
-    .venv/bin/python -m possession.tracker      # label the match, print what it claims
+    .venv/bin/python -m possession.tracker      # label the match and print a summary
 """
 
 import os
@@ -36,198 +29,240 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from games import GAME, GAMES  # noqa: E402
-from possession import atd, deadball, features  # noqa: E402
+from possession import deadball, features  # noqa: E402
 from possession.series import rolling_mean, runs  # noqa: E402
 
-# Params -- from football and the tracking's known precision, not fitted to this match's labels.
+# Params -- chosen from football and the tracking's accuracy.
 FPS = GAMES[GAME]["fps"]
-# Ball at a player's feet sits up to about a metre from where the tracking puts the player.
-CONTROL_RADIUS_M = 1.5
-# A dribbled ball runs ahead of the player and is caught up, so its speed swings around theirs.
-CONTROL_REL_SPEED = 3.0
-# Three frames: the shortest contact the tracking can show as more than noise.
-TOUCH_S = 0.12
-CONTROL_S = 0.4
-# Two touches further apart than this are not one move: the first was a deflection.
-TWO_TOUCH_GAP_S = 3.0
-# A change with at least this much unseen ball before it is placed by team shape, not by the
-# moment the ball reappeared.
-GAP_PLACE_S = 2.0
-SHAPE_HALF_WINDOW = FPS
+CONTROL_RADIUS_M = 1.5      # ball at a player's feet is within about 1.5 m of the player
+CONTROL_REL_SPEED = 3.0     # a dribbled ball runs a little ahead and behind the player
+TOUCH_S = 0.12              # 3 frames: the shortest contact we trust
+CONTROL_S = 0.4             # 10 frames: real control
+TWO_TOUCH_GAP_S = 3.0       # two touches further apart than this are not one move
+GAP_PLACE_S = 2.0           # place a change by team shape if the ball was unseen this long
+SHAPE_HALF_WINDOW = FPS     # team shapes are averaged over 1 s either side
 
-HOME, AWAY, DEAD, ABSTAIN = 0, 1, 2, 3
-LABELS = np.array(["H", "A", "D", "X"])
+HOME, AWAY, DEAD, NO_ANSWER = 0, 1, 2, 3
+LABELS = np.array(["H", "A", "D", "X"])  # the letter for each of the numbers above
 
 
 def control_side(table):
-    """Per-frame HOME / AWAY where that team controls the ball, -1 otherwise."""
+    """For every frame: HOME or AWAY if that team controls the ball, otherwise -1."""
     with np.errstate(invalid="ignore"):
         home_close = table["near_home_dist"] <= CONTROL_RADIUS_M
         away_close = table["near_away_dist"] <= CONTROL_RADIUS_M
-        home = home_close & (table["near_home_rel_speed"] <= CONTROL_REL_SPEED)
-        away = away_close & (table["near_away_rel_speed"] <= CONTROL_REL_SPEED)
-    side = np.full(len(home), -1, dtype=np.int8)
-    side[home & ~away_close] = HOME
-    side[away & ~home_close] = AWAY
+        home_moves_with_ball = table["near_home_rel_speed"] <= CONTROL_REL_SPEED
+        away_moves_with_ball = table["near_away_rel_speed"] <= CONTROL_REL_SPEED
+
+    home_controls = home_close & home_moves_with_ball & ~away_close
+    away_controls = away_close & away_moves_with_ball & ~home_close
+
+    side = np.full(len(home_close), -1, dtype=np.int8)
+    side[home_controls] = HOME
+    side[away_controls] = AWAY
     return side
 
 
 def control_events(side):
-    """[(start, stop, team, strong)] frame-sorted, from the per-frame control side."""
+    """Turn the per-frame control into a list of events, sorted by time.
+
+    Each event is (start frame, stop frame, team, is_control). is_control is True for a
+    control (0.4 s or more) and False for a touch.
+    """
     events = []
     for team in (HOME, AWAY):
-        for start, stop in zip(*runs(side == team)):
-            if stop - start >= TOUCH_S * FPS:
-                events.append((int(start), int(stop), team, stop - start >= CONTROL_S * FPS))
+        starts, stops = runs(side == team)
+        for i in range(len(starts)):
+            length = stops[i] - starts[i]
+            if length >= TOUCH_S * FPS:
+                is_control = length >= CONTROL_S * FPS
+                events.append((int(starts[i]), int(stops[i]), team, is_control))
     return sorted(events)
 
 
+def standardise(values):
+    """Divide values by how much they vary over the match, so different signals can be added.
+
+    Unknown values (NaN, or infinite from the log of zero) become 0.
+    """
+    values = np.where(np.isfinite(values), values, np.nan)
+    scale = np.nanstd(values)
+    if not scale:
+        return np.zeros(len(values), dtype=np.float32)
+    scaled = np.where(np.isnan(values), 0.0, values / scale)
+    return scaled.astype(np.float32)
+
+
 def shape_score(table):
-    """Per-frame evidence from the team shapes alone: positive = home has the ball.
+    """Three signals for every frame. Positive means "looks like the home team has the ball".
 
-    Two signals that do not depend on which way anyone is running, so a back-pass -- everyone
-    moving towards the passer's own goal -- does not flip them:
+        width    the team with the ball spreads wider across the pitch
+        effort   the team without the ball runs more (it is chasing)
+        tags     Smart Tagging votes
 
-      width    the team with the ball stretches the pitch across; the team without it squeezes
-      effort   the team without the ball does the running, chasing it
-
-    plus the Smart Tagging votes. Each signal is put on a common scale by its own spread over the
-    match (no labels involved), then they are added and smoothed over +/-1 s.
-
-    Chosen by shape_agreement(), which needs no ground truth: where the ball is in view, how often
-    a signal points at the team the ball-based tracker gave possession to. Width and effort agree
-    far more often than the alternatives tried (spread along the pitch, pressing, team speed
-    towards goal, team height); speed towards goal is barely better than a coin, because back-
-    passes and pressing send both teams the same way.
+    We checked these against our own ball-based answers where the ball is seen. Width and effort
+    agreed much more often than the direction the teams move, which back-passes confuse.
     """
     with np.errstate(invalid="ignore", divide="ignore"):
         width = np.log(table["home_spread_width"]) - np.log(table["away_spread_width"])
         effort = table["away_mean_speed"] - table["home_mean_speed"]
-    # Mirrored tag pairs mean one phase usually brings two votes; halving puts it near unit scale.
+    # A moment of play usually gets two tags (one per team), so the votes are halved.
     votes = (table["tag_home_votes"].astype(np.float32) - table["tag_away_votes"]) / 2.0
     return {"width": standardise(width), "effort": standardise(effort), "tags": votes}
 
 
-def standardise(values):
-    """values / their spread over the match; 0 where unknown. Infinite counts as unknown: a log
-    of a zero spread, when a team has one player in view, is no measurement at all."""
-    values = np.where(np.isfinite(values), values, np.nan)
-    scale = np.nanstd(values)
-    return np.where(np.isnan(values), 0.0, values / scale).astype(np.float32) if scale else \
-        np.zeros(len(values), dtype=np.float32)
-
-
 def combined_score(parts):
-    return rolling_mean(sum(parts.values()), SHAPE_HALF_WINDOW)
+    """The three signals added together, averaged over 1 s either side."""
+    total = parts["width"] + parts["effort"] + parts["tags"]
+    return rolling_mean(total, SHAPE_HALF_WINDOW)
 
 
 def place_change(score, start, stop, new_team):
-    """Best single change point in [start, stop) for a change to new_team, by team shape.
+    """Find the best frame in [start, stop) for possession to change to new_team.
 
-    Picks the frame t that best splits the window into "old team" before and "new team" after:
-    the old team is the opposite sign, so for a change to home the best t minimises the running
-    sum of the score up to t, and for a change to away it maximises it.
+    The best frame splits the window so that, before it, the score points at the old team and,
+    after it, at the new team. With a running total of the score, that is where the running
+    total is lowest (change to home) or highest (change to away).
     """
     window = np.nan_to_num(score[start:stop])
-    if not len(window):
+    if len(window) == 0:
         return start
-    prefix = np.concatenate(([0.0], np.cumsum(window)))
-    best = np.argmin(prefix) if new_team == HOME else np.argmax(prefix)
+    running_total = np.concatenate(([0.0], np.cumsum(window)))
+    if new_team == HOME:
+        best = np.argmin(running_total)
+    else:
+        best = np.argmax(running_total)
     return start + int(best)
 
 
 def label_segment(events, start, stop, score, seen):
-    """[(frame, team)] possession changes within one live stretch, the first at its start."""
-    inside = [event for event in events if start <= event[0] < stop]
-    if not inside:
-        # No control anywhere: the shapes are all there is.
-        return [(start, HOME if np.nansum(score[start:stop]) >= 0 else AWAY)]
+    """Decide possession for one stretch of live play, from start to stop.
 
-    state = inside[0][2]
-    changes = [(start, state)]
-    pending = None
-    last_own = inside[0][1]
-    for event_start, event_stop, team, strong in inside[1:]:
-        if team == state:
-            pending, last_own = None, event_stop
+    Returns the possession changes as a list of (frame, team). The first is at start.
+    """
+    events_here = []
+    for event in events:
+        if start <= event[0] < stop:
+            events_here.append(event)
+
+    if len(events_here) == 0:
+        # Nobody controlled the ball at all: use the team shapes.
+        if np.nansum(score[start:stop]) >= 0:
+            return [(start, HOME)]
+        return [(start, AWAY)]
+
+    # The first team with an event restarted the play.
+    team_with_ball = events_here[0][2]
+    changes = [(start, team_with_ball)]
+    waiting_touch = None              # one touch by the other team, waiting for a second
+    last_own_event_end = events_here[0][1]
+
+    for event_start, event_end, team, is_control in events_here[1:]:
+        if team == team_with_ball:
+            # The team with the ball touched it again: forget the other team's touch.
+            waiting_touch = None
+            last_own_event_end = event_end
             continue
-        if strong:
-            at = pending[0] if pending is not None else event_start
-        elif pending is not None and event_start - pending[1] <= TWO_TOUCH_GAP_S * FPS:
-            at = pending[0]
+
+        # The event is by the other team.
+        if is_control:
+            if waiting_touch is not None:
+                change_frame = waiting_touch[0]
+            else:
+                change_frame = event_start
+        elif waiting_touch is not None and event_start - waiting_touch[1] <= TWO_TOUCH_GAP_S * FPS:
+            change_frame = waiting_touch[0]   # second touch in a row
         else:
-            pending = (event_start, event_stop)
+            waiting_touch = (event_start, event_end)   # first touch: wait
             continue
-        if np.sum(~seen[last_own:at]) >= GAP_PLACE_S * FPS:
-            at = place_change(score, last_own, at, team)
-        changes.append((at, team))
-        state, pending, last_own = team, None, event_stop
+
+        # If the ball was unseen for a while before the change, place it by team shape.
+        unseen_frames = np.sum(~seen[last_own_event_end:change_frame])
+        if unseen_frames >= GAP_PLACE_S * FPS:
+            change_frame = place_change(score, last_own_event_end, change_frame, team)
+
+        changes.append((change_frame, team))
+        team_with_ball = team
+        waiting_touch = None
+        last_own_event_end = event_end
+
     return changes
 
 
 def live_stretches(half, dead):
-    """[(start, stop)] of each run of live graded frames, never crossing a half."""
+    """List of (start, stop) for each stretch of live play inside the graded halves."""
     starts, stops = runs((half > 0) & ~dead)
-    return list(zip(starts.tolist(), stops.tolist()))
+    stretches = []
+    for i in range(len(starts)):
+        stretches.append((int(starts[i]), int(stops[i])))
+    return stretches
 
 
 def label(table, stoppages):
-    """Per-frame label codes for the whole video: H/A/D on graded frames, X outside them."""
+    """The answer for every frame of the video, as numbers (see LABELS).
+
+    D on stoppage frames, H or A on live frames, X outside the graded halves.
+    """
     n_frames = len(table["half"])
     dead = deadball.dead_mask(stoppages, n_frames)
-    codes = np.full(n_frames, ABSTAIN, dtype=np.int8)
+    codes = np.full(n_frames, NO_ANSWER, dtype=np.int8)
     codes[(table["half"] > 0) & dead] = DEAD
 
     events = control_events(control_side(table))
     score = combined_score(shape_score(table))
     seen = ~np.isnan(table["ball_x"])
+
     for start, stop in live_stretches(table["half"], dead):
         changes = label_segment(events, start, stop, score, seen)
-        for (frame, team), (next_frame, _) in zip(changes, changes[1:] + [(stop, None)]):
-            codes[frame:next_frame] = team
+        for i in range(len(changes)):
+            change_frame, team = changes[i]
+            if i + 1 < len(changes):
+                next_change_frame = changes[i + 1][0]
+            else:
+                next_change_frame = stop
+            codes[change_frame:next_change_frame] = team
     return codes
 
 
 def shape_agreement(table, codes):
-    """How often each shape signal agrees with the ball-based label, where the ball is in view.
+    """Print how often each team-shape signal agrees with our ball-based answer.
 
-    A check that needs no ground truth: the shape signals exist to stand in for the ball when it
-    is missing, so where the ball IS seen they should mostly point the same way as the label the
-    ball produced. A signal near 50% carries nothing and should not be trusted in the gaps.
+    Only frames where the ball is seen are used. No real answers are involved.
     """
     alive = (codes == HOME) | (codes == AWAY)
-    seen = alive & ~np.isnan(table["ball_x"])
+    ball_seen = alive & ~np.isnan(table["ball_x"])
     parts = shape_score(table)
     parts["combined"] = combined_score(parts)
-    for name, values in parts.items():
-        smoothed = rolling_mean(values, SHAPE_HALF_WINDOW)
-        voted = seen & (smoothed != 0) & ~np.isnan(smoothed)
-        agree = np.mean((smoothed[voted] > 0) == (codes[voted] == HOME))
-        print("  {:<9} agrees with the ball-based team on {:5.1f}% of {:.0f} min".format(
-            name, 100.0 * agree, voted.sum() / FPS / 60.0))
+    for name in parts:
+        smoothed = rolling_mean(parts[name], SHAPE_HALF_WINDOW)
+        has_vote = ball_seen & (smoothed != 0) & ~np.isnan(smoothed)
+        agree = np.mean((smoothed[has_vote] > 0) == (codes[has_vote] == HOME))
+        print("  {:<9} agrees on {:.1f}% of {:.0f} minutes".format(
+            name, 100.0 * agree, has_vote.sum() / FPS / 60.0))
 
 
 def describe(codes, table):
-    """What the labels claim, in the terms of the scorer, with no ground truth involved."""
+    """Print what our answer says about the match. No real answers are involved."""
     graded = table["half"] > 0
-    spells = []
-    for _, first, last in features.half_video_blocks(GAME):
-        window = codes[first:last + 1]
-        breaks = np.flatnonzero(window[1:] != window[:-1]) + 1
-        bounds = np.concatenate(([0], breaks, [len(window)]))
-        spells += [(bounds[i + 1] - bounds[i]) / float(FPS) for i in range(len(bounds) - 1)
-                   if window[bounds[i]] in (HOME, AWAY)]
+    possession_seconds = []
+    for half_number, first_frame, last_frame in features.half_video_blocks(GAME):
+        half_codes = codes[first_frame:last_frame + 1]
+        for team in (HOME, AWAY):
+            starts, stops = runs(half_codes == team)
+            for i in range(len(starts)):
+                possession_seconds.append((stops[i] - starts[i]) / float(FPS))
+
     alive = (codes == HOME) | (codes == AWAY)
+    home_share = 100.0 * np.sum(codes == HOME) / alive.sum()
+    dead_share = 100.0 * np.mean(codes[graded] == DEAD)
     print("{} possessions, mean {:.1f} s, median {:.1f} s; home share {:.1f}%; dead {:.1f}%".format(
-        len(spells), np.mean(spells), np.median(spells),
-        100.0 * np.sum(codes == HOME) / alive.sum(), 100.0 * np.mean(codes[graded] == DEAD)))
-    print("possessions shorter than 2 s: {}   longer than 60 s: {}".format(
-        sum(s < 2 for s in spells), sum(s > 60 for s in spells)))
+        len(possession_seconds), np.mean(possession_seconds), np.median(possession_seconds),
+        home_share, dead_share))
 
 
 if __name__ == '__main__':
     table = features.load()
     codes = label(table, deadball.detect(table))
     describe(codes, table)
-    print("\nshape signals vs the ball, where the ball is seen")
+    print("\nteam-shape signals vs our ball-based answer, where the ball is seen:")
     shape_agreement(table, codes)

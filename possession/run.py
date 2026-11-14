@@ -1,10 +1,9 @@
-"""Regenerate the submission: the provided data in, one frame,label CSV out.
+"""Make the submission file: match data in, one frame,label CSV out.
 
-    .venv/bin/python -m possession.run                           # -> evaluation/results/ours.csv
-    .venv/bin/python -m possession.run --out some/where/team.csv
+    .venv/bin/python -m possession.run                       # writes evaluation/results/ours.csv
+    .venv/bin/python -m possession.run --out GunnersFC.csv   # writes GunnersFC.csv
 
-Deterministic end to end -- no randomness, no training at run time -- so the same data always gives
-the same file, byte for byte, which is what the rules require of a submission.
+Nothing is random, so the same data always gives exactly the same file.
 """
 
 import argparse
@@ -23,19 +22,22 @@ DEFAULT_OUT = os.path.join(ROOT, "evaluation", "results", "ours.csv")
 
 
 def build(refresh=False):
-    """Label codes for every frame of the tactical video."""
-    table = features.load(refresh=refresh)
-    return tracker.label(table, deadball.detect(table)), table
+    """Run all three steps. Returns the answer codes for every frame, and the table."""
+    table = features.load(refresh=refresh)     # step 1: measurements
+    stoppages = deadball.detect(table)         # step 2: stoppages
+    codes = tracker.label(table, stoppages)    # step 3: possession
+    return codes, table
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default=DEFAULT_OUT, help="where to write the CSV")
     parser.add_argument("--refresh", action="store_true",
-                        help="rebuild the cached tracking and measurements first")
+                        help="read the tracking file again instead of using the saved copy")
     args = parser.parse_args()
 
     codes, table = build(args.refresh)
-    path = write_submission(args.out, tracker.LABELS[codes])
+    letters = tracker.LABELS[codes]
+    path = write_submission(args.out, letters)
     tracker.describe(codes, table)
     print("wrote {}".format(os.path.relpath(path, ROOT)))
