@@ -1,0 +1,31 @@
+{
+  "team": "GunnersFC",
+  "candidate": "external_stoppage_v1",
+  "decision": "Conservative fallback; later v2a/v3 experiments did not pass all replacement checks",
+  "files": {
+    "GunnersFC.csv": "791099fb5195ed0fc8a2c9a60de7fcc5a4cfae9d5899a196819b1c56b4518c3f",
+    "GunnersFC.md": "5f8329838c8f2f4d5582bcb253d683ac6375a235731dc62440fff8ad8e9af0b6"
+  },
+  "rows": 199319,
+  "exact_reproduction_passed": true,
+  "runtime": "3.11.16 (main, Sep 24 2026, 17:46:15) [Clang 22.1.3 ]\nnumpy 2.4.6\npandas 3.1.1",
+  "inference_code_sha256": {
+    "games.py": "3b2122794e9e0476e2b3a871d14880e5fa47c4feaeacf99caef054c2309076ce",
+    "possession/__init__.py": "933bb7780f853ef3c44b7d359cdb2b5361514efefaa3cd9b768ebc3599157cdf",
+    "possession/pipeline.py": "304a53a50db0edc6b89e477050d3f24c0eab02087c94f245bea51cd7f52974b8",
+    "possession/stoppage.py": "5e430d969effb2183f0100c909fa8a09c8a184d62cfaa87edf9f4e1105b24b68",
+    "possession/config.json": "166a8020f725db4474c14bbb78599fdc68cf59b0142e989beb88104f79a3136f",
+    "possession/config_external_control_v1.json": "28d702b8f687a8b4296d334d7ff72219110a21113f2712058e3cbbcab2bea429",
+    "possession/model_external_stoppage_v1.json": "d2d2fe9a135105180ba54ae04c096045561f865f776b484f94e63eaa2819c891",
+    "evaluation/possession_metrics.py": "341bad48904b489d6e875397b27687f5d6a4d22a397f3dc8af3a00d48f16874d",
+    "evaluation/validate_submission.py": "07ac29499acbd337e1dc1de1832d63f6e1fa1d981e22f6ad08212529e2bbee14"
+  },
+  "requirements_sha256": "357d824dac305bdfca4fd63b8bf38595e62831374153023cb8beaed9a7849851",
+  "automatic_input_sha256": {
+    "atd_meta": "327e35e32e46a647389b88f883d4f9a2ab931e3e6148aef2fcf8f22b1e93c43a",
+    "atd_raw": "f130e350d2bfdf734b7e32f072931fccc6d015c1e837d082064875fe0a700431",
+    "smart_tagging": "0594d35e3df01b9c5002372d8615e2e8ef5379ac8f4e84c5ef7a53f4304c9019"
+  },
+  "challenge_accuracy": "Not evaluated",
+  "remaining": "Publish reviewed reproducible code repository and enter its URL in the official submission form"
+}

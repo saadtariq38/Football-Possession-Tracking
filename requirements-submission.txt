@@ -1,0 +1,6 @@
+# Python 3.11. Minimal inference and official format-validation environment.
+numpy==2.4.6
+pandas==3.1.1
+python-dateutil==4.0.0
+six==1.17.0
+tzdata==2026.6

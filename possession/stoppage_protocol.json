@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "source": "IDSSE Figshare article 28196177 version 1, CC BY 4.0",
+  "training_matches": ["J03WPY"],
+  "selection_matches": ["J03WOH"],
+  "validation_matches": ["J03WQQ"],
+  "locked_before_scoring": true,
+  "reference": "Raw ball BallStatus: 0 dead, 1 alive; everything else unknown and masked",
+  "excluded_inputs": ["BallStatus", "BallPossession", "events", "altitude", "raw provider speed", "challenge labels", "challenge video"],
+  "features": "Observed x/y only: ball motion, boundary distance, player distance, collective movement; centred windows 0.4, 2, 6 seconds; missing indicators",
+  "model": "Standardised logistic regression, unpenalised intercept, L2 on coefficients, natural class prevalence; final refit on training and selection matches",
+  "ridge_candidates": [0.001, 0.01, 0.1],
+  "binary_switch_penalty_candidates_at_5fps": [2.0, 8.0, 20.0],
+  "selection_metric": "Equal-scenario binary macro F1 on selection matches, tie prefer larger ridge then smaller switch penalty",
+  "scenarios": ["original observations", "deterministic synthetic gaps, dropouts and jumps independent of labels"],
+  "augmentation_seed": 20261114,
+  "degradation": "43 percent ball missing in blocks of 1, 3, 8 seconds; 15 percent individual player observations dropped; 1 percent surviving ball observations offset by Gaussian 25m noise",
+  "training_sampling_hz": 5,
+  "validation": "Freeze model before one held-out evaluation; report original and degraded separately; one-to-one maximum-cardinality transition matching within 2 seconds, timing for matched transitions and unmatched counts; no tuning on validation",
+  "integration": "Separate binary live/dead sequence, frozen external control settings for H/A, D overrides team state. No challenge-based parameter changes."
+}

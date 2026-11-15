@@ -1,0 +1,21 @@
+{
+  "parameters": {
+    "kind": "hybrid",
+    "learned_weight": 1.0,
+    "missing_multiplier": 1.0,
+    "smoothing_seconds": 0.0,
+    "switch_penalty": 2.0,
+    "mode": "reset_at_predicted_dead"
+  },
+  "protocol_sha256": "024340b51a9a7299f2b21bb956ac12aae3b1ac2618e326ed6243ae5068804700",
+  "code_sha256": "30677006dc4e23190f942abf2debc3b04ecb61cb0b30db316031b8f604c00bd0",
+  "metric_code_sha256": "341bad48904b489d6e875397b27687f5d6a4d22a397f3dc8af3a00d48f16874d",
+  "base_model_sha256": "08b8b8291f6e78107d5a4ce91bdd413373e7c3ae9b02f8d0db1e533e9e82a9c7",
+  "development_matches": [
+    "J03WPY",
+    "J03WOH"
+  ],
+  "fresh_validation_match": "J03WMX",
+  "attribution": "Bassek, Rein, Weber & Memmert (2025); DFL / Sportec Solutions; IDSSE DOI 10.6084/m9.figshare.28196177.v1; CC BY 4.0",
+  "status": "Frozen spellF1-selected sequence parameters; fresh validation pending"
+}

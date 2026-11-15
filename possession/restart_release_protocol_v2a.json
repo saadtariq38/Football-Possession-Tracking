@@ -1,0 +1,21 @@
+{
+  "version": "2a",
+  "base_model_sha256": "08b8b8291f6e78107d5a4ce91bdd413373e7c3ae9b02f8d0db1e533e9e82a9c7",
+  "reason": "All broad replacement stop heads failed v2 development guards; keep v1 stop head and evaluate bounded release-only correction before fresh validation",
+  "training_match": "J03WPY",
+  "selection_match": "J03WOH",
+  "fresh_validation_match": "J03WR9",
+  "excluded_previous_audit_match": "J03WQQ",
+  "input_region": "Only frames in the final 2s of a predicted dead run that has a predicted live successor, with the ball missing. Derived exclusively from frozen model predictions and observations.",
+  "features": "Frozen dead log-odds; past/future mean player speed at 0.4 and 1.2s; past/future active-player fraction at 0.4s; future ball-observation fraction at 1.2s; time until predicted resume divided by 2s",
+  "fit": "Natural-prevalence logistic regression on explicit external live/dead examples sampled at 5Hz in the observation-defined region; ridge 0.01 or 0.1; final refit training+selection. No parameter search on either held-out match.",
+  "ridge_candidates": [0.01, 0.1],
+  "maximum_advance_seconds_candidates": [0.5, 1.0, 2.0],
+  "maximum_dead_probability_candidates": [0.1, 0.25],
+  "sustained_missing_live_evidence_seconds": 0.4,
+  "action": "Advance an existing predicted D->live boundary only after a consecutive 0.4s run of missing-ball observations with release model dead probability below threshold. Cap advance at selected limit. No new D is possible; no unbounded gap fill or action on terminal D runs. Recompute team path if the selected head resets on D.",
+  "selection": "Include no-change baseline. Minimise missing-ball false-D rate at restart offsets 0.5,1,2s; tie maximise equal-scenario mean whole H/A/D accuracy, then prefer no change, larger ridge, shorter maximum advance and lower probability threshold.",
+  "guards": "Each scenario: whole H/A/D accuracy >= base-v2-0.002, dead F1 >= base-v2-0.005, dead recall >= base-v2-0.01. Unknown labels masked. All selected parameters frozen before J03WR9 scoring.",
+  "fresh_evaluation": "Use original v2 release gate without relaxing it. Primary candidate is v2 plus chosen refinement. Also report unrefined v2 as diagnostic; do not choose ablations after validation.",
+  "attribution": "Bassek, Rein, Weber & Memmert (2025); DFL / Sportec Solutions; IDSSE DOI 10.6084/m9.figshare.28196177.v1; CC BY 4.0"
+}

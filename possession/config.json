@@ -1,0 +1,19 @@
+{
+  "control_radius_m": 2.0,
+  "control_support_seconds": 0.4,
+  "motion_difference_scale_mps": 8.0,
+  "ball_jump_scale_mps": 45.0,
+  "continuity_decay_seconds": 2.0,
+  "bridge_decay_seconds": 2.0,
+  "stationary_ball_scale_mps": 0.5,
+  "quiet_players_scale_mps": 1.0,
+  "boundary_softness_m": 0.5,
+  "restart_context_seconds": 3.0,
+  "control_weight": 2.0,
+  "continuity_weight": 1.0,
+  "tag_weight": 0.6,
+  "outside_weight": 3.0,
+  "restart_stoppage_weight": 1.5,
+  "dead_base_penalty": 0.3,
+  "switch_penalty": 3.0
+}

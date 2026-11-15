@@ -1,0 +1,7 @@
+{
+  "provider": "SkillCorner",
+  "development": ["2017461", "2016236"],
+  "validation": ["2015213"],
+  "selection": "Fixed from match index before external algorithm evaluation; split by complete match.",
+  "status": "Preparation only. Validation match must not be used for parameter selection."
+}

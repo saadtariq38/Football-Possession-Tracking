@@ -1,0 +1,78 @@
+{
+  "head": {
+    "kind": "learned",
+    "ridge": 0.01,
+    "maximum_advance_seconds": 2.0,
+    "maximum_dead_probability": 0.25,
+    "sustain_seconds": 0.4,
+    "model": {
+      "imputation": [
+        1.3058957108633527,
+        0.7446277215101873,
+        0.7716815051360755,
+        0.7252265506232409,
+        0.8021036788673579,
+        0.07474722345086775,
+        0.09451023391829949,
+        0.0,
+        0.5
+      ],
+      "mean": [
+        1.7580899877009057,
+        0.7438713864999448,
+        0.7734957663584783,
+        0.7257316074847884,
+        0.8192033203146448,
+        0.10775103318857242,
+        0.1292139852276309,
+        0.06872536136662288,
+        0.5060446780551905
+      ],
+      "scale": [
+        1.7618823042846612,
+        0.16746858761595254,
+        0.1734243810144868,
+        0.16089254670275077,
+        0.17709225692238767,
+        0.10799739583407779,
+        0.12246021672115798,
+        0.19669519990372827,
+        0.29045298456554075
+      ],
+      "intercept": 0.8567023888857704,
+      "coefficient": [
+        0.4268383557046674,
+        0.09544189433264459,
+        -0.009893220231699577,
+        -0.3842337583261766,
+        -1.2223186588576849,
+        0.31751399538880276,
+        0.13349790875291093,
+        0.1991696465204906,
+        0.24980024270983864
+      ],
+      "ridge": 0.01
+    }
+  },
+  "feature_names": [
+    "base_dead_log_odds",
+    "player_speed_past_0.4s",
+    "player_speed_future_0.4s",
+    "player_speed_past_1.2s",
+    "player_speed_future_1.2s",
+    "player_active_past_0.4s",
+    "player_active_future_0.4s",
+    "ball_observed_future_1.2s",
+    "time_until_predicted_resume_over_2s"
+  ],
+  "base_model_sha256": "08b8b8291f6e78107d5a4ce91bdd413373e7c3ae9b02f8d0db1e533e9e82a9c7",
+  "protocol_sha256": "5cb1e26809e3dfe75b9ce3b144bddcc92ab962f1fe8b8a558d6a7d6c9530ee24",
+  "code_sha256": "b2d351a8624c8af5041d8a4ed35846f83846cd1f08e14b487f3ac4c94a901807",
+  "fitted_matches": [
+    "J03WPY",
+    "J03WOH"
+  ],
+  "fresh_validation_match": "J03WR9",
+  "attribution": "Bassek, Rein, Weber & Memmert (2025); DFL / Sportec Solutions; IDSSE DOI 10.6084/m9.figshare.28196177.v1; CC BY 4.0",
+  "status": "Frozen external-only bounded release model; fresh validation pending"
+}

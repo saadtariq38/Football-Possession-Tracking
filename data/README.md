@@ -1,50 +1,63 @@
-# Unpack the match data here
+# Match data layout
 
-This folder is empty on purpose. The match assets are gated — see [DATA.md](../DATA.md) for how to
-enrol, accept the terms, and get the download link.
+Keep original assets in `tactical/` and `broadcast/`. These paths are used by
+`games.py` and the starter notebooks. Keep their filenames unchanged.
 
-Unpack the bundle here, keeping the names it arrives with:
-
-```
+```text
 data/
-├─ tactical/                                  the evaluation reference
-│  ├─ BAR-ATH_tactical.mp4                    row i of a submission is frame i of this
-│  ├─ BAR-ATH_tactical_atd.xml                tracking metadata
-│  ├─ BAR-ATH_tactical_atd.txt                tracking, players and ball
-│  ├─ BAR-ATH_tactical_homography.csv         one 3x3 matrix per frame
-│  └─ BAR-ATH_tactical_smart_tagging.xml      638 tactical phases and set pieces
-└─ broadcast/                                 optional, NOT synchronised to tactical
-   ├─ BAR-ATH_broadcast.mp4
-   ├─ BAR-ATH_broadcast_atd.xml
-   ├─ BAR-ATH_broadcast_atd.txt
-   └─ BAR-ATH_broadcast_homography.csv
+├── README.md        # this guide; tracked in Git
+├── inventory.json   # generated local asset status and SHA-256 hashes
+├── tactical/        # primary input; submission timeline
+├── broadcast/       # optional second feed; separate timeline
+├── processed/       # generated features, cleaned tracking and aligned events
+└── cache/           # disposable intermediate files
 ```
 
-One folder per recording, because the question that matters most about any of these files is which
-timeline it is on. `games.py` derives every path, so nothing else in the repository spells one out:
+## Original assets
 
-```python
-from games import asset_paths
-asset_paths()                      # tactical, the default
-asset_paths(source="broadcast")
-```
+Both source folders contain these three files, prefixed with `BAR-ATH_tactical`
+or `BAR-ATH_broadcast`:
 
-If a filename ever changes, `games.py` is the only edit.
+| Suffix | Contents | Use |
+| --- | --- | --- |
+| `_atd.xml` | Team and tracking-slot metadata | Interpret tracking |
+| `_atd.txt` | Player and ball positions and speeds | Main possession input |
+| `_homography.csv` | Camera-to-pitch transforms | Project image/pitch coordinates |
 
-Prefer to keep the data somewhere else? Point `MTAH_DATA_DIR` at it and nothing else changes:
+`tactical/` also contains `BAR-ATH_tactical_smart_tagging.xml`: automatically
+inferred tactical phases and set pieces, used as supporting evidence.
+
+All seven non-video assets are present locally. The optional videos have not
+been downloaded. If added later, put `BAR-ATH_tactical.mp4` in `tactical/` and
+`BAR-ATH_broadcast.mp4` in `broadcast/`.
+
+Submissions use tactical video frames **0 through 199318**, at **25 fps**.
+Broadcast frames are not synchronised to tactical frames. See [DATA.md](../DATA.md)
+for exact formats and alignment conventions.
+
+## Working with the data
+
+- Keep original files unchanged; write reusable generated data to `processed/`.
+- Use `cache/` for intermediates that can be rebuilt.
+- Write prediction CSVs to `../evaluation/results/`.
+- Scoring reports go to `../evaluation/reports/`.
+- Public labels live separately in `../evaluation/gt/`.
+
+Rebuild the asset inventory from the repository root:
 
 ```bash
-export MTAH_DATA_DIR=/mnt/big-disk/mtah2027       # macOS / Linux
-$env:MTAH_DATA_DIR = "D:\mtah2027"                # Windows PowerShell
+.venv/bin/python scripts/data_inventory.py
 ```
 
-## Nothing in here is committed
+This records availability, byte sizes and SHA-256 hashes in `inventory.json`.
+Hashes identify local contents; they are not compared with organiser checksums.
+Missing files are reported, not downloaded. The command also creates empty
+`processed/` and `cache/` folders on a fresh checkout.
 
-`.gitignore` keeps everything except this README out of git. That is not only tidiness — the terms
-you accepted cover redistribution, and a public fork with the match video in it is redistribution.
-Your own submission repository has to be public too, so check the same thing there.
+Only this README under `data/` is tracked in Git. Assets, generated data,
+inventory and caches remain ignored. The original ZIPs were removed from Downloads
+after extraction and verification; the extracted assets remain in the source folders.
 
-## You do not need any of this to run the scorer
-
-The evaluation reads CSVs only. `python evaluation/run_evaluation.py` works on a fresh clone with
-this folder empty, and scores the four baselines that ship with the repository.
+To keep data elsewhere, set `MTAH_DATA_DIR` to the folder containing `tactical/`
+and `broadcast/`. The inventory command honours this setting too.
+See [the main README](../README.md#getting-the-data) for access instructions.
