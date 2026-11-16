@@ -3,6 +3,9 @@
 This is team GunnersFC's entry. It is a copy of the organisers' repository with our code added in
 [`possession/`](possession/). How our method works is in [GunnersFC.md](GunnersFC.md).
 
+Our submission is the `main` branch. Other branches in this repository were used for experiments
+and are not part of the submission.
+
 ## How to make our submission file
 
 You need Python 3.9 to 3.12 (we used 3.12.3 on Linux) and about 1 GB of free memory.
